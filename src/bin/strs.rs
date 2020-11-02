@@ -24,7 +24,15 @@ fn strs() {
     println!("global string ref: {}", &GLOB_STR);
 }
 
+fn str_slice_bad() {
+    let s = String::from("123");
+    // causes panic because 10 is out of bounds
+    let str = &s[0..10];
+    println!("{} {}", s, str);
+}
+
 
 fn main() {
     strs();
+    str_slice_bad();
 }
