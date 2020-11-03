@@ -31,8 +31,20 @@ fn str_slice_bad() {
     println!("{} {}", s, str);
 }
 
+fn take_slice(s: &str) {
+    println!("{}", s)
+}
+
+fn callslice() {
+    let s  =  "hi";
+    take_slice(s);
+    let st = String::from(s);
+    take_slice(&st);
+}
+
 
 fn main() {
     strs();
+    callslice();
     str_slice_bad();
 }
