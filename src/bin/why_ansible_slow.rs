@@ -1,3 +1,4 @@
+// TODO: think i have a bug.
 // TODO: think about ownership, examine when passing ownership
 // TODO: rustfmt setting to not make structs so verbose..
 use pretty_env_logger;
@@ -25,7 +26,7 @@ struct Opt {
 struct TaskTime {
     duration: std::time::Duration,
     task: String,
-    // line_num: u64,
+    line_num: usize,
 }
 
 impl Ord for TaskTime {
@@ -38,20 +39,24 @@ impl Display for TaskTime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // TODO: ansi color/bold stuff?
         // TODO: task padding a bit weird.
-        write!(f, "{:>7} for [{:<32}] (line __)", human_duration(&self.duration), self.task)
+        write!(f, "{:>7} for [{:<32}] (line {})", human_duration(&self.duration), self.task, self.line_num)
     }
 }
 
+// TODO: unit tests please
 fn human_duration(d: &Duration) -> String {
     let (mut h,mut m) = (0, 0);
     let mut ds = d.as_secs();
+    log::debug!("hum_dur {:?} start...", ds);
     if ds > SECS_IN_HOUR {
         h += ds / SECS_IN_HOUR;
         ds = ds % SECS_IN_HOUR;
+        log::debug!("hum_dur hours h={}, ds={}", h, ds);
     }
-    if ds > 60 {
-        m += ds / 60;
-        ds = ds % 60;
+    if ds > SECS_IN_MINUTE {
+        m += ds / SECS_IN_MINUTE;
+        ds = ds % SECS_IN_MINUTE;
+        log::debug!("hum_dur minutes m={}, ds={}", m, ds);
     }
     // todo: making generic is tricky
     fn ifne0(val: u64, suf: &str) -> String {
@@ -61,25 +66,27 @@ fn human_duration(d: &Duration) -> String {
             String::from("")
         }
     }
-    format!("{}{}{}s", ifne0(h, "h"), ifne0(m, "m"), ds)
+    let r = format!("{}{}{}s", ifne0(h, "h"), ifne0(m, "m"), ds);
+    log::debug!("hum_dur final: h={} m={} s={} -> {}", h, m, ds, r);
+    r
 }
 
 fn main() -> Result<()> {
-    std::env::set_var("RUST_LOG", "info");
+    // std::env::set_var("RUST_LOG", "info");
     pretty_env_logger::init();
     let opt = Opt::from_args();
     log::info!("options: {:?}", opt);
     let reader = BufReader::new(File::open(opt.input)?);
     let mut task_times = process_ansible_log(reader)?;
-    log::info!("# task times: {:?}", task_times.len());
+    println!("# task times: {:?}", task_times.len());
     // todo: can sort backwards?
     task_times.sort();
-    let task_items_str = task_times.iter().rev().take(10).map(|tt| format!("\n  {}", tt)).join("");
+    let task_items_str = task_times.iter().rev().take(20).map(|tt| format!("\n  {}", tt)).join("");
     // let task_items_str = String::from("\n");
     // for task_time in task_times.iter().take(10) {
     //     task_items_str.push_str(format!("  {:?}\n", task_time));
     // }
-    log::info!("top task times:{}", task_items_str);
+    println!("top task times:{}", task_items_str);
     Ok(())
 }
 
@@ -114,7 +121,7 @@ fn process_ansible_log(reader: BufReader<File>) -> Result<Vec<TaskTime>> {
     // used for diffing durations.
     let mut prev_task_end_duration = Duration::new(0, 0);
     let mut parse_state = ParseState::Start;
-    for line in reader.lines() {
+    for (line_num, line) in reader.lines().enumerate() {
         let line = line?;
 
         if let Some(start_cap) = TASK_START.captures(&line) {
@@ -142,7 +149,7 @@ fn process_ansible_log(reader: BufReader<File>) -> Result<Vec<TaskTime>> {
                             if total_duration.as_secs() == 0 { "latest value = 0, so guessing there are 2 ansible runs in this log?" } else { "latest value non-zero. very unexpected" }
                         );
                     }
-                    task_times.push(TaskTime { task, duration: this_task_duration });
+                    task_times.push(TaskTime { task, duration: this_task_duration, line_num });
                     log::info!("++ pushing task: {:?}", task_times.last().unwrap());
                     prev_task_end_duration = total_duration;
                     parse_state = ParseState::HaveTask { task: new_task };
@@ -182,17 +189,23 @@ fn process_ansible_log(reader: BufReader<File>) -> Result<Vec<TaskTime>> {
         ParseState::Start => log::error!("no data?"),
         ParseState::HaveTask { task } => log::debug!("missing time for task {}, skipped?", task),
         ParseState::HaveTaskTime { task, total_duration: duration } => {
-            task_times.push(TaskTime { task, duration });
+            // TODO: line_num should be the line from the initial task, need to move into state enum
+            task_times.push(TaskTime { task, duration, line_num: 999 });
             log::info!("++ final tasktime: {:?}", task_times.last().unwrap());
         }
     }
     Ok(task_times)
 }
 
-const SECS_IN_HOUR: u64 = 60 * 60;
+const SECS_IN_MINUTE: u64 = 60;
+const SECS_IN_HOUR: u64 = 60 * SECS_IN_MINUTE;
 const SECS_IN_DAY: u64 = 24 * SECS_IN_HOUR;
 
+
+// TODO: oh no, seems like ansible has a bug where when time crosses 1hr mark,
+// seconds has extra 3600...
 fn parse_task_duration_line(cap: Captures) -> Result<std::time::Duration> {
+    // Regex::new(r"^Task run took (\d+) days, (\d+) hours, (\d+) minutes, (\d+) seconds")
     // TODO: how to capture outer thing in a nested fn?
     // fn helper(cap_index: usize, desc: &str, sec_mult: u64) -> Result<Duration> {
     fn helper(
@@ -203,11 +216,16 @@ fn parse_task_duration_line(cap: Captures) -> Result<std::time::Duration> {
     ) -> Result<Duration> {
         // TODO: how come opt.ok_or("msg")? doesn't work, but opt.context("msg")? does?
         // TODO: why did i need to break this up?
-        let num: u64 = cap.get(cap_index).context(desc)?.as_str().parse()?;
+        let mut num: u64 = cap.get(cap_index).context(desc)?.as_str().parse()?;
+        if cap_index == 4 && num >= 3600 {
+            // TODO: also check hour > 1? meh.
+            log::warn!("ok, seconds value > 3600, assume that's an ansible bug. removing. {:?}", cap);
+            num -= 3600;
+        }
         Ok(Duration::from_secs(num * sec_mult))
     }
     Ok(helper(&cap, 1, "duration days", SECS_IN_DAY)?
         + helper(&cap, 2, "duration hours", SECS_IN_HOUR)?
-        + helper(&cap, 3, "duration minutes", 60)?
+        + helper(&cap, 3, "duration minutes", SECS_IN_MINUTE)?
         + helper(&cap, 4, "duration seconds", 1)?)
 }
