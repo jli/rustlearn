@@ -1,0 +1,99 @@
+Already on 'development'
+Your branch is behind 'origin/development' by 30 commits, and can be fast-forwarded.
+  (use "git pull" to update your local branch)
+Updating 68321e00c9..176e789422
+[WARNING]: Invalid characters were found in group names but not replaced, use
+Timer plugin is active.
+Task run took 0 days, 0 hours, 0 minutes, 0 seconds
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+skipping: [127.0.0.1]
+
+TASK [get the git tag or branch from current checked out repo] *****************
+skipping: [127.0.0.1]
+
+TASK [set the git tag if since it was not defined from the command line or config files] ***
+skipping: [127.0.0.1]
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+[DEPRECATION WARNING]: Distribution Ubuntu 18.04 on host 127.0.0.1 should use 
+/usr/bin/python3, but is using /usr/bin/python for backward compatibility with 
+prior Ansible releases. A future Ansible release will default to using the 
+discovered platform python for this host. See https://docs.ansible.com/ansible/
+2.9/reference_appendices/interpreter_discovery.html for more information. This 
+feature will be removed in version 2.12. Deprecation warnings can be disabled 
+by setting deprecation_warnings=False in ansible.cfg.
+ok: [127.0.0.1]
+Task run took 0 days, 0 hours, 0 minutes, 1 seconds
+
+TASK [utils/playbook-control : Determine playbook target] **********************
+ok: [127.0.0.1]
+Task run took 0 days, 0 hours, 0 minutes, 1 seconds
+
+TASK [utils/slack : Send notification message via Slack] ***********************
+ok: [127.0.0.1]
+Task run took 0 days, 0 hours, 0 minutes, 2 seconds
+
+TASK [aws_ec2 : launch the API_MASTER ec2 instance] ****************************
+[WARNING]: Instances i-05c8b49f189b5dfc1 took too long to reach state OK.
+Waiter InstanceStatusOk failed: Max attempts exceeded
+changed: [127.0.0.1]
+Task run took 0 days, 0 hours, 2 minutes, 59 seconds
+
+TASK [aws_ec2 : launch the COMPUTE_MASTER ec2 instance] ************************
+changed: [127.0.0.1]
+Task run took 0 days, 0 hours, 3 minutes, 0 seconds
+
+PLAY RECAP *********************************************************************
+127.0.0.1                  : ok=47   changed=16   unreachable=0    failed=0    skipped=27   rescued=0    ignored=0   
+
+Playbook run took 0 days, 0 hours, 4 minutes, 10 seconds
+[WARNING]: Invalid characters were found in group names but not replaced, use
+Timer plugin is active.
+Task run took 0 days, 0 hours, 0 minutes, 0 seconds
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+skipping: [127.0.0.1]
+
+TASK [get the git tag or branch from current checked out repo] *****************
+skipping: [127.0.0.1]
+
+TASK [set the git tag if since it was not defined from the command line or config files] ***
+skipping: [127.0.0.1]
+
+TASK [Gathering Facts] *********************************************************
+ok: [3.8.1.5]
+Task run took 0 days, 0 hours, 0 minutes, 2 seconds
+ok: [5.6.1.2]
+
+TASK [systemd_swap : set the vm.swappiness value] ******************************
+[WARNING]: The value 10 (type int) in a string field was converted to '10'
+(type string). If this does not look like what you expect, quote the entire
+value to ensure it does not change.
+ok: [3.8.1.5]
+Task run took 0 days, 0 hours, 0 minutes, 21 seconds
+ok: [5.6.1.2]
+Task run took 0 days, 0 hours, 0 minutes, 21 seconds
+
+TASK [database/db-roles : Set user privileges for all existing objects in schema(s)] ***
+ok: [127.0.0.1] => (item=data)
+ok: [127.0.0.1] => (item=fact_tables)
+ok: [127.0.0.1] => (item=geospatial)
+Task run took 0 days, 0 hours, 5 minutes, 28 seconds
+
+TASK [utils/elb : register the aws elb ec2 instance] ***************************
+ok: [3.8.1.5]
+Task run took 0 days, 1 hours, 2 minutes, 3652 seconds
+
+PLAY RECAP *********************************************************************
+127.0.0.1                  : ok=268  changed=56   unreachable=0    failed=0    skipped=56   rescued=0    ignored=0   
+3.8.1.5                    : ok=95   changed=13   unreachable=0    failed=0    skipped=17   rescued=0    ignored=2   
+5.6.1.2                    : ok=83   changed=3    unreachable=0    failed=0    skipped=21   rescued=0    ignored=2   
+
+Playbook run took 0 days, 1 hours, 14 minutes, 3632 seconds

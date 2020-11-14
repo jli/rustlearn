@@ -1,0 +1,42 @@
+
+TASK [utils/slack : Send notification message via Slack] ***********************
+skipping: [52.4.115.175]
+
+TASK [utils/validate-release : Send Validate Release Tool task to be run on compute node] ***
+skipping: [52.4.115.175]
+
+TASK [utils/slack : Send notification message via Slack] ***********************
+ok: [52.4.115.175]
+Task run took 0 days, 0 hours, 0 minutes, 12 seconds
+
+TASK [platform-tier/gro-api/cache : Install all Dependencies] ******************
+ok: [52.4.115.175] => (item=redis-tools)
+ok: [52.4.115.175] => (item=python-httplib2)
+Task run took 0 days, 0 hours, 0 minutes, 15 seconds
+
+TASK [platform-tier/gro-api/cache : Send api cache warming (aka precache) task] ***
+changed: [52.4.115.175]
+Task run took 0 days, 0 hours, 0 minutes, 16 seconds
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [127.0.0.1]
+Task run took 0 days, 0 hours, 0 minutes, 16 seconds
+
+TASK [utils/slack : Send notification message via Slack] ***********************
+ok: [127.0.0.1]
+Task run took 0 days, 0 hours, 0 minutes, 17 seconds
+
+TASK [utils/ses-mail : Fetching Release checklist issue permalink] *************
+skipping: [127.0.0.1]
+
+TASK [utils/ses-mail : Sending email to OPS and GroInternal team] **************
+skipping: [127.0.0.1]
+
+PLAY RECAP *********************************************************************
+127.0.0.1                  : ok=14   changed=5    unreachable=0    failed=0    skipped=8    rescued=0    ignored=0   
+52.4.115.175               : ok=4    changed=1    unreachable=0    failed=0    skipped=2    rescued=0    ignored=0   
+54.167.56.26               : ok=3    changed=0    unreachable=0    failed=0    skipped=3    rescued=0    ignored=0   
+
+Playbook run took 0 days, 0 hours, 0 minutes, 17 seconds
