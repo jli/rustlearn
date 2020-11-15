@@ -1,13 +1,10 @@
-// TODO: think i have a bug.
 // TODO: think about ownership, examine when passing ownership
 // TODO: rustfmt setting to not make structs so verbose..
 use pretty_env_logger;
 use std::{fmt::Display, fs::File};
 use std::time::Duration;
-use std::{
-    io::{BufRead, BufReader},
-    path::PathBuf,
-};
+use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use regex::{Captures, Regex};
@@ -79,13 +76,9 @@ fn main() -> Result<()> {
     let reader = BufReader::new(File::open(opt.input)?);
     let mut task_times = process_ansible_log(reader)?;
     println!("# task times: {:?}", task_times.len());
-    // todo: can sort backwards?
     task_times.sort();
-    let task_items_str = task_times.iter().rev().take(20).map(|tt| format!("\n  {}", tt)).join("");
-    // let task_items_str = String::from("\n");
-    // for task_time in task_times.iter().take(10) {
-    //     task_items_str.push_str(format!("  {:?}\n", task_time));
-    // }
+    task_times.reverse();
+    let task_items_str = task_times.iter().take(20).map(|tt| format!("\n  {}", tt)).join("");
     println!("top task times:{}", task_items_str);
     Ok(())
 }
@@ -106,9 +99,11 @@ enum ParseState {
     Start,
     HaveTask {
         task: String,
+        line_num: usize,
     },
     HaveTaskTime {
         task: String,
+        line_num: usize,
         total_duration: Duration,
     },
 }
@@ -123,6 +118,7 @@ fn process_ansible_log(reader: BufReader<File>) -> Result<Vec<TaskTime>> {
     let mut parse_state = ParseState::Start;
     for (line_num, line) in reader.lines().enumerate() {
         let line = line?;
+        let line_num = line_num + 1;
 
         if let Some(start_cap) = TASK_START.captures(&line) {
             let new_task: String = start_cap.get(1).context("new task line")?.as_str().into();
@@ -130,13 +126,13 @@ fn process_ansible_log(reader: BufReader<File>) -> Result<Vec<TaskTime>> {
             match parse_state {
                 ParseState::Start => {
                     log::debug!("-> HaveTask (initial): {}", new_task);
-                    parse_state = ParseState::HaveTask { task: new_task };
+                    parse_state = ParseState::HaveTask { task: new_task, line_num };
                 }
-                ParseState::HaveTask { task: prev } => {
+                ParseState::HaveTask { task: prev, .. } => {
                     log::debug!("⤿ got another task {} (assuming previous task was skipped {})", new_task, prev);
-                    parse_state = ParseState::HaveTask { task: new_task };
+                    parse_state = ParseState::HaveTask { task: new_task, line_num };
                 }
-                ParseState::HaveTaskTime { task, total_duration, } => {
+                ParseState::HaveTaskTime { task, line_num: start_line_num, total_duration } => {
                     let this_task_duration;
                     if total_duration >= prev_task_end_duration {
                         // this task's duration is the delta of the last duration
@@ -149,10 +145,10 @@ fn process_ansible_log(reader: BufReader<File>) -> Result<Vec<TaskTime>> {
                             if total_duration.as_secs() == 0 { "latest value = 0, so guessing there are 2 ansible runs in this log?" } else { "latest value non-zero. very unexpected" }
                         );
                     }
-                    task_times.push(TaskTime { task, duration: this_task_duration, line_num });
+                    task_times.push(TaskTime { task, duration: this_task_duration, line_num: start_line_num });
                     log::info!("++ pushing task: {:?}", task_times.last().unwrap());
                     prev_task_end_duration = total_duration;
-                    parse_state = ParseState::HaveTask { task: new_task };
+                    parse_state = ParseState::HaveTask { task: new_task, line_num };
                     log::debug!("-> {:?}", parse_state);
                 }
             }
@@ -167,18 +163,18 @@ fn process_ansible_log(reader: BufReader<File>) -> Result<Vec<TaskTime>> {
                         panic!("!! task duration without task start? {}", line);
                     }
                 }
-                ParseState::HaveTask { task } => {
-                    parse_state = ParseState::HaveTaskTime { task, total_duration: latest_duration };
+                ParseState::HaveTask { task, line_num } => {
+                    parse_state = ParseState::HaveTaskTime { task, line_num, total_duration: latest_duration };
                     log::debug!("-> {:?}", parse_state);
                 }
-                ParseState::HaveTaskTime { task, total_duration: prev } => {
+                ParseState::HaveTaskTime { task, line_num, total_duration: prev } => {
                     // this can happen when a task executes on multiple hosts,
                     // and so there are multiple task duration lines within new
                     // task lines in between. we want the last task duration
                     // value in the series, so we just update the stored
                     // duration while staying in the same state.
                     log::debug!( "-> HaveTaskTime updating task {} duration {:?} to {:?}", task, prev, latest_duration);
-                    parse_state = ParseState::HaveTaskTime { task, total_duration: latest_duration };
+                    parse_state = ParseState::HaveTaskTime { task, line_num, total_duration: latest_duration };
                 }
             }
         }
@@ -187,10 +183,10 @@ fn process_ansible_log(reader: BufReader<File>) -> Result<Vec<TaskTime>> {
     // handle any leftover state.
     match parse_state {
         ParseState::Start => log::error!("no data?"),
-        ParseState::HaveTask { task } => log::debug!("missing time for task {}, skipped?", task),
-        ParseState::HaveTaskTime { task, total_duration: duration } => {
-            // TODO: line_num should be the line from the initial task, need to move into state enum
-            task_times.push(TaskTime { task, duration, line_num: 999 });
+        ParseState::HaveTask { task, line_num } =>
+            log::debug!("missing time for task {} (line {}), skipped?", task, line_num),
+        ParseState::HaveTaskTime { task, line_num, total_duration: duration } => {
+            task_times.push(TaskTime { task, line_num, duration });
             log::info!("++ final tasktime: {:?}", task_times.last().unwrap());
         }
     }
@@ -201,9 +197,6 @@ const SECS_IN_MINUTE: u64 = 60;
 const SECS_IN_HOUR: u64 = 60 * SECS_IN_MINUTE;
 const SECS_IN_DAY: u64 = 24 * SECS_IN_HOUR;
 
-
-// TODO: oh no, seems like ansible has a bug where when time crosses 1hr mark,
-// seconds has extra 3600...
 fn parse_task_duration_line(cap: Captures) -> Result<std::time::Duration> {
     // Regex::new(r"^Task run took (\d+) days, (\d+) hours, (\d+) minutes, (\d+) seconds")
     // TODO: how to capture outer thing in a nested fn?
@@ -217,8 +210,8 @@ fn parse_task_duration_line(cap: Captures) -> Result<std::time::Duration> {
         // TODO: how come opt.ok_or("msg")? doesn't work, but opt.context("msg")? does?
         // TODO: why did i need to break this up?
         let mut num: u64 = cap.get(cap_index).context(desc)?.as_str().parse()?;
+        // Note: seems like ansible has a bug when time crosses 1hr mark, seconds has extra 3600.
         if cap_index == 4 && num >= 3600 {
-            // TODO: also check hour > 1? meh.
             log::warn!("ok, seconds value > 3600, assume that's an ansible bug. removing. {:?}", cap);
             num -= 3600;
         }
