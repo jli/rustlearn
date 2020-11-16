@@ -85,24 +85,25 @@ fn main() -> Result<()> {
 
 // returns TaskTimes in original chronological order
 fn process_ansible_log(reader: BufReader<File>) -> Result<Vec<TaskTime>> {
-    let mut processor = LogProcessor::new();
+    let mut processor = LogProcessor::default();
     for (line_num, line) in reader.lines().enumerate() {
         let line = line?;
         let line_num = line_num + 1;
         if let Some(start_cap) = TASK_START.captures(&line) {
             let task: String = start_cap.get(1).context("new task line")?.as_str().into();
-            processor = processor.transition(ParseEvent::TaskStart { task }, line_num);
+            processor.transition(ParseEvent::TaskStart { task }, line_num);
         } else if let Some(end_cap) = TASK_DURATION.captures(&line) {
             let total_duration = parse_task_duration_line(end_cap)?;
-            processor = processor.transition(ParseEvent::TaskTime { total_duration }, line_num);
+            processor.transition(ParseEvent::TaskTime { total_duration }, line_num);
         }
         // skip over all other lines.
     }
-    processor = processor.end();
+    processor.end();
     Ok(processor.task_times)
 }
 
 // state/impl for transitioning between ParseStates with ParseEvents, and accumulating task_times.
+#[derive(Default)]
 struct LogProcessor {
     state: ParseState,
     prev_task_end_duration: Duration,
@@ -116,27 +117,25 @@ enum ParseState {
     HaveTaskTime { task: String, line_num: usize, total_duration: Duration },
 }
 
+impl Default for ParseState {
+    fn default() -> Self { ParseState::Start }
+}
+
 enum ParseEvent {
     TaskStart { task: String },
     TaskTime { total_duration: Duration },
 }
 
 impl LogProcessor {
-    // todo: use default
-    fn new() -> Self {
-        Self {
-            state: ParseState::Start,
-            prev_task_end_duration: Duration::new(0, 0),
-            task_times: vec![],
-        }
-    }
-
-    fn transition(mut self, ev: ParseEvent, line_num: usize) -> Self{
+    fn transition(&mut self, ev: ParseEvent, line_num: usize) {
+        // take state value to reuse the inner values. all branches must reassign self.state,
+        // because it's been replaced with a default value of Start.
+        let state = std::mem::take(&mut self.state);
         // use ParseState::*;  // doesn't work?
         // TODO: try to make this tuple match, or have state be outer match
         match ev {
             ParseEvent::TaskStart { task: new_task } => {
-                match self.state {
+                match state {
                     ParseState::Start => {
                         self.state = ParseState::HaveTask { task: new_task, line_num };
                         log::debug!("-> (initial) {:?}", self.state);
@@ -172,7 +171,7 @@ impl LogProcessor {
                 }
             },
             ParseEvent::TaskTime { total_duration } => {
-                match self.state {
+                match state {
                     ParseState::Start => {
                         if self.task_times.is_empty() {
                             log::debug!( ".. skipping initial task duration b/c had no task: {:?}", total_duration);
@@ -196,12 +195,13 @@ impl LogProcessor {
                 }
             },
         }
-        self
     }
 
-    fn end(mut self) -> Self {
-        // handle any leftover state.
-        match self.state {
+    fn end(&mut self) {
+        // handle any leftover state. take to own state data. after this is called, state is reset
+        // to Start. would be more correct to assign to "End" value or something, but meh.
+        let state = std::mem::take(&mut self.state);
+        match state {
             ParseState::Start =>
                 log::error!("no data?"),
             ParseState::HaveTask { task, line_num } =>
@@ -211,8 +211,6 @@ impl LogProcessor {
                 log::info!("++ final tasktime: {:?}", self.task_times.last().unwrap());
             }
         }
-        self.state = ParseState::Start;
-        self
     }
 }
 
