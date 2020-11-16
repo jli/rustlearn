@@ -17,6 +17,8 @@ use log;
 struct Opt {
     #[structopt(parse(from_os_str))]
     input: PathBuf,
+    #[structopt(short, long, default_value = "30")]
+    num_tasks: usize,
 }
 
 #[derive(Debug, Eq, PartialOrd, PartialEq)]
@@ -78,7 +80,7 @@ fn main() -> Result<()> {
     println!("# task times: {:?}", task_times.len());
     task_times.sort();
     task_times.reverse();
-    let task_items_str = task_times.iter().take(20).map(|tt| format!("\n  {}", tt)).join("");
+    let task_items_str = task_times.iter().take(opt.num_tasks).map(|tt| format!("\n  {}", tt)).join("");
     println!("top task times:{}", task_items_str);
     Ok(())
 }
@@ -203,8 +205,8 @@ impl LogProcessor {
                 log::error!("no data?"),
             ParseState::HaveTask { task, line_num } =>
                 log::debug!("missing time for task {} (line {}), skipped?", task, line_num),
-            ParseState::HaveTaskTime { task, line_num, total_duration: duration } => {
-                self.task_times.push(TaskTime { task, line_num, duration });
+            ParseState::HaveTaskTime { task, line_num, total_duration } => {
+                self.task_times.push(TaskTime { task, line_num, duration: total_duration - self.prev_task_end_duration });
                 log::info!("++ final tasktime: {:?}", self.task_times.last().unwrap());
             }
         }
