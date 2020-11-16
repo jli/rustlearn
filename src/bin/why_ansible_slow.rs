@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use regex::{Captures, Regex};
 use structopt::StructOpt;
-use itertools::Itertools;
+use itertools::Itertools;  // Join trait
 use lazy_static::lazy_static;
 use log;
 
@@ -42,7 +42,7 @@ impl Display for TaskTime {
 
 // TODO: unit tests please
 fn human_duration(d: &Duration) -> String {
-    let (mut h,mut m) = (0, 0);
+    let (mut h, mut m) = (0, 0);
     let mut ds = d.as_secs();
     log::debug!("hum_dur {:?} start...", ds);
     if ds > SECS_IN_HOUR {
@@ -83,6 +83,143 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+// returns TaskTimes in original chronological order
+fn process_ansible_log(reader: BufReader<File>) -> Result<Vec<TaskTime>> {
+    let mut processor = LogProcessor::new();
+    for (line_num, line) in reader.lines().enumerate() {
+        let line = line?;
+        let line_num = line_num + 1;
+        if let Some(start_cap) = TASK_START.captures(&line) {
+            let task: String = start_cap.get(1).context("new task line")?.as_str().into();
+            processor = processor.transition(ParseEvent::TaskStart { task }, line_num);
+        } else if let Some(end_cap) = TASK_DURATION.captures(&line) {
+            let total_duration = parse_task_duration_line(end_cap)?;
+            processor = processor.transition(ParseEvent::TaskTime { total_duration }, line_num);
+        }
+        // skip over all other lines.
+    }
+    processor = processor.end();
+    Ok(processor.task_times)
+}
+
+// state/impl for transitioning between ParseStates with ParseEvents, and accumulating task_times.
+struct LogProcessor {
+    state: ParseState,
+    prev_task_end_duration: Duration,
+    task_times: Vec<TaskTime>,
+}
+
+#[derive(Debug)]
+enum ParseState {
+    Start,
+    HaveTask { task: String, line_num: usize },
+    HaveTaskTime { task: String, line_num: usize, total_duration: Duration },
+}
+
+enum ParseEvent {
+    TaskStart { task: String },
+    TaskTime { total_duration: Duration },
+}
+
+impl LogProcessor {
+    // todo: use default
+    fn new() -> Self {
+        Self {
+            state: ParseState::Start,
+            prev_task_end_duration: Duration::new(0, 0),
+            task_times: vec![],
+        }
+    }
+
+    fn transition(mut self, ev: ParseEvent, line_num: usize) -> Self{
+        // use ParseState::*;  // doesn't work?
+        // TODO: try to make this tuple match, or have state be outer match
+        match ev {
+            ParseEvent::TaskStart { task: new_task } => {
+                match self.state {
+                    ParseState::Start => {
+                        self.state = ParseState::HaveTask { task: new_task, line_num };
+                        log::debug!("-> (initial) {:?}", self.state);
+                    },
+                    ParseState::HaveTask { task: prev, .. } => {
+                        log::debug!("⤿ got another task {} (assuming previous task was skipped {})", new_task, prev);
+                        self.state = ParseState::HaveTask { task: new_task, line_num };
+                    },
+                    ParseState::HaveTaskTime { task, line_num: start_line_num, total_duration } => {
+                        let this_task_duration;
+                        if total_duration >= self.prev_task_end_duration {
+                            // this task's duration is the delta of the last duration
+                            // stamp minus the previous task's ending duration.
+                            this_task_duration = total_duration - self.prev_task_end_duration;
+                        } else {
+                            log::warn!("note: got negative duration delta ({:?} -> {:?}), using 0 instead. {}",
+                                self.prev_task_end_duration, total_duration,
+                                if total_duration.as_secs() == 0 {
+                                    "latest value = 0, so guessing there are 2 ansible runs in this log?"
+                                } else {
+                                    "latest value non-zero. very unexpected"
+                                }
+                            );
+                            // TODO: i think this should actually be just total_duration right?
+                            this_task_duration = Duration::new(0, 0);
+                        }
+                        self.task_times.push(TaskTime { task, duration: this_task_duration, line_num: start_line_num });
+                        log::info!("++ completed task: {:?}", self.task_times.last().unwrap());
+                        self.prev_task_end_duration = total_duration;
+                        self.state = ParseState::HaveTask { task: new_task, line_num };
+                        log::debug!("-> {:?}", self.state);
+                    },
+                }
+            },
+            ParseEvent::TaskTime { total_duration } => {
+                match self.state {
+                    ParseState::Start => {
+                        if self.task_times.is_empty() {
+                            log::debug!( ".. skipping initial task duration b/c had no task: {:?}", total_duration);
+                        } else {
+                            panic!("!! task duration without task start? {}", line_num);
+                        }
+                    },
+                    ParseState::HaveTask { task, line_num } => {
+                        self.state = ParseState::HaveTaskTime { task, line_num, total_duration };
+                        log::debug!("-> {:?}", self.state);
+                    },
+                    ParseState::HaveTaskTime { task, line_num, total_duration: prev } => {
+                        // this can happen when a task executes on multiple hosts,
+                        // and so there are multiple task duration lines within new
+                        // task lines in between. we want the last task duration
+                        // value in the series, so we just update the stored
+                        // duration while staying in the same state.
+                        log::debug!( "-> HaveTaskTime updating task {} duration {:?} to {:?}", task, prev, total_duration);
+                        self.state = ParseState::HaveTaskTime { task, line_num, total_duration };
+                    }
+                }
+            },
+        }
+        self
+    }
+
+    fn end(mut self) -> Self {
+        // handle any leftover state.
+        match self.state {
+            ParseState::Start =>
+                log::error!("no data?"),
+            ParseState::HaveTask { task, line_num } =>
+                log::debug!("missing time for task {} (line {}), skipped?", task, line_num),
+            ParseState::HaveTaskTime { task, line_num, total_duration: duration } => {
+                self.task_times.push(TaskTime { task, line_num, duration });
+                log::info!("++ final tasktime: {:?}", self.task_times.last().unwrap());
+            }
+        }
+        self.state = ParseState::Start;
+        self
+    }
+}
+
+const SECS_IN_MINUTE: u64 = 60;
+const SECS_IN_HOUR: u64 = 60 * SECS_IN_MINUTE;
+const SECS_IN_DAY: u64 = 24 * SECS_IN_HOUR;
+
 lazy_static! {
     static ref TASK_START: Regex =
         Regex::new(r"^(?:TASK|RUNNING HANDLER) \[(.+)\] \*{3}\**").unwrap();
@@ -93,109 +230,6 @@ lazy_static! {
         Regex::new(r"^Task run took (\d+) days, (\d+) hours, (\d+) minutes, (\d+) seconds")
             .unwrap();
 }
-
-#[derive(Debug)]
-enum ParseState {
-    Start,
-    HaveTask {
-        task: String,
-        line_num: usize,
-    },
-    HaveTaskTime {
-        task: String,
-        line_num: usize,
-        total_duration: Duration,
-    },
-}
-
-// TODO: refactor into more state machine like struct, fed w/ lines
-// returns TaskTimes in original chronological order
-fn process_ansible_log(reader: BufReader<File>) -> Result<Vec<TaskTime>> {
-    // use ParseState::*;  // doesn't work?
-    let mut task_times = vec![];
-    // used for diffing durations.
-    let mut prev_task_end_duration = Duration::new(0, 0);
-    let mut parse_state = ParseState::Start;
-    for (line_num, line) in reader.lines().enumerate() {
-        let line = line?;
-        let line_num = line_num + 1;
-
-        if let Some(start_cap) = TASK_START.captures(&line) {
-            let new_task: String = start_cap.get(1).context("new task line")?.as_str().into();
-
-            match parse_state {
-                ParseState::Start => {
-                    log::debug!("-> HaveTask (initial): {}", new_task);
-                    parse_state = ParseState::HaveTask { task: new_task, line_num };
-                }
-                ParseState::HaveTask { task: prev, .. } => {
-                    log::debug!("⤿ got another task {} (assuming previous task was skipped {})", new_task, prev);
-                    parse_state = ParseState::HaveTask { task: new_task, line_num };
-                }
-                ParseState::HaveTaskTime { task, line_num: start_line_num, total_duration } => {
-                    let this_task_duration;
-                    if total_duration >= prev_task_end_duration {
-                        // this task's duration is the delta of the last duration
-                        // stamp minus the previous task's ending duration.
-                        this_task_duration = total_duration - prev_task_end_duration;
-                    } else {
-                        this_task_duration = Duration::new(0, 0);
-                        log::warn!("note: got negative duration delta ({:?} -> {:?}), using 0 instead. {}",
-                            prev_task_end_duration, total_duration,
-                            if total_duration.as_secs() == 0 { "latest value = 0, so guessing there are 2 ansible runs in this log?" } else { "latest value non-zero. very unexpected" }
-                        );
-                    }
-                    task_times.push(TaskTime { task, duration: this_task_duration, line_num: start_line_num });
-                    log::info!("++ pushing task: {:?}", task_times.last().unwrap());
-                    prev_task_end_duration = total_duration;
-                    parse_state = ParseState::HaveTask { task: new_task, line_num };
-                    log::debug!("-> {:?}", parse_state);
-                }
-            }
-        } else if let Some(end_cap) = TASK_DURATION.captures(&line) {
-            let latest_duration = parse_task_duration_line(end_cap)?;
-
-            match parse_state {
-                ParseState::Start => {
-                    if task_times.is_empty() {
-                        log::debug!( ".. skipping initial task duration b/c had no task: {:?}", latest_duration);
-                    } else {
-                        panic!("!! task duration without task start? {}", line);
-                    }
-                }
-                ParseState::HaveTask { task, line_num } => {
-                    parse_state = ParseState::HaveTaskTime { task, line_num, total_duration: latest_duration };
-                    log::debug!("-> {:?}", parse_state);
-                }
-                ParseState::HaveTaskTime { task, line_num, total_duration: prev } => {
-                    // this can happen when a task executes on multiple hosts,
-                    // and so there are multiple task duration lines within new
-                    // task lines in between. we want the last task duration
-                    // value in the series, so we just update the stored
-                    // duration while staying in the same state.
-                    log::debug!( "-> HaveTaskTime updating task {} duration {:?} to {:?}", task, prev, latest_duration);
-                    parse_state = ParseState::HaveTaskTime { task, line_num, total_duration: latest_duration };
-                }
-            }
-        }
-        // else: other lines we skip over.
-    }
-    // handle any leftover state.
-    match parse_state {
-        ParseState::Start => log::error!("no data?"),
-        ParseState::HaveTask { task, line_num } =>
-            log::debug!("missing time for task {} (line {}), skipped?", task, line_num),
-        ParseState::HaveTaskTime { task, line_num, total_duration: duration } => {
-            task_times.push(TaskTime { task, line_num, duration });
-            log::info!("++ final tasktime: {:?}", task_times.last().unwrap());
-        }
-    }
-    Ok(task_times)
-}
-
-const SECS_IN_MINUTE: u64 = 60;
-const SECS_IN_HOUR: u64 = 60 * SECS_IN_MINUTE;
-const SECS_IN_DAY: u64 = 24 * SECS_IN_HOUR;
 
 fn parse_task_duration_line(cap: Captures) -> Result<std::time::Duration> {
     // Regex::new(r"^Task run took (\d+) days, (\d+) hours, (\d+) minutes, (\d+) seconds")
