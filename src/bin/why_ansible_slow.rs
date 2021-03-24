@@ -1,17 +1,16 @@
 // TODO: think about ownership, examine when passing ownership
 // TODO: rustfmt setting to not make structs so verbose..
 use pretty_env_logger;
-use std::{fmt::Display, fs::File};
-use std::time::Duration;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
+use std::time::Duration;
+use std::{fmt::Display, fs::File};
 
 use anyhow::{Context, Result};
-use regex::{Captures, Regex};
-use structopt::StructOpt;
-use itertools::Itertools;  // Join trait
 use lazy_static::lazy_static;
 use log;
+use regex::{Captures, Regex};
+use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
 struct Opt {
@@ -78,12 +77,25 @@ fn main() -> Result<()> {
     let reader = BufReader::new(File::open(opt.input)?);
     let mut task_times = process_ansible_log(reader)?;
     println!("# tasks: {:?}", task_times.len());
-    let total_time = task_times.iter().map(|tt| { tt.duration }).sum::<Duration>();
+    let total_time = task_times.iter().map(|tt| tt.duration).sum::<Duration>();
     println!("total task times: {}", human_duration(&total_time));
+    println!("top task times:");
+    println!("  accum. |    task | task");
+    println!("    time |    time | description");
+    println!("--------------------------------------");
     task_times.sort();
     task_times.reverse();
-    let task_items_str = task_times.iter().take(opt.num_tasks).map(|tt| format!("\n  {}", tt)).join("");
-    println!("top task times:{}", task_items_str);
+    let mut cumulative_time = Duration::from_secs(0);
+    for tt in task_times.iter().take(opt.num_tasks) {
+        cumulative_time = cumulative_time + tt.duration;
+        println!(
+            "{:>8} | {:>7} | {} (line {})",
+            human_duration(&cumulative_time),
+            human_duration(&tt.duration),
+            tt.task,
+            tt.line_num
+        );
+    }
     Ok(())
 }
 
