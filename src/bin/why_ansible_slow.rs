@@ -77,7 +77,9 @@ fn main() -> Result<()> {
     log::info!("options: {:?}", opt);
     let reader = BufReader::new(File::open(opt.input)?);
     let mut task_times = process_ansible_log(reader)?;
-    println!("# task times: {:?}", task_times.len());
+    println!("# tasks: {:?}", task_times.len());
+    let total_time = task_times.iter().map(|tt| { tt.duration }).sum::<Duration>();
+    println!("total task times: {}", human_duration(&total_time));
     task_times.sort();
     task_times.reverse();
     let task_items_str = task_times.iter().take(opt.num_tasks).map(|tt| format!("\n  {}", tt)).join("");
