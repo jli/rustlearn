@@ -37,7 +37,13 @@ impl Display for TaskTime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // TODO: ansi color/bold stuff?
         // TODO: task padding a bit weird.
-        write!(f, "{:>7} for [{:<32}] (line {})", human_duration(&self.duration), self.task, self.line_num)
+        write!(
+            f,
+            "{:>7} for [{:<32}] (line {})",
+            human_duration(&self.duration),
+            self.task,
+            self.line_num
+        )
     }
 }
 
@@ -129,12 +135,21 @@ struct LogProcessor {
 #[derive(Debug)]
 enum ParseState {
     Start,
-    HaveTask { task: String, line_num: usize },
-    HaveTaskTime { task: String, line_num: usize, total_duration: Duration },
+    HaveTask {
+        task: String,
+        line_num: usize,
+    },
+    HaveTaskTime {
+        task: String,
+        line_num: usize,
+        total_duration: Duration,
+    },
 }
 
 impl Default for ParseState {
-    fn default() -> Self { ParseState::Start }
+    fn default() -> Self {
+        ParseState::Start
+    }
 }
 
 enum ParseEvent {
@@ -144,8 +159,8 @@ enum ParseEvent {
 
 impl LogProcessor {
     fn transition(&mut self, ev: ParseEvent, line_num: usize) {
-        use ParseState as PState;
         use ParseEvent as PEvent;
+        use ParseState as PState;
         // take state value to reuse the inner values. all branches must reassign self.state,
         // because it's been replaced with a default value of Start.
         let state = std::mem::take(&mut self.state);
@@ -153,35 +168,54 @@ impl LogProcessor {
             (PState::Start, PEvent::TaskStart { task }) => {
                 self.state = ParseState::HaveTask { task, line_num };
                 log::debug!("-> (initial) {:?}", self.state);
-            },
+            }
             (PState::Start, PEvent::TaskTime { total_duration }) => {
                 if self.task_times.is_empty() {
-                    log::debug!( ".. skipping initial task duration b/c had no task: {:?}", total_duration);
+                    log::debug!(
+                        ".. skipping initial task duration b/c had no task: {:?}",
+                        total_duration
+                    );
                 } else {
                     panic!("!! task duration without task start? {}", line_num);
                 }
                 // Note: Start is the default value populated by take so technically unnecessary,
                 // just being explicit.
                 self.state = PState::Start;
-            },
+            }
             (PState::HaveTask { task: prev, .. }, PEvent::TaskStart { task }) => {
-                log::debug!("⤿ got another task {} (assuming previous task was skipped {})", task, prev);
+                log::debug!(
+                    "⤿ got another task {} (assuming previous task was skipped {})",
+                    task,
+                    prev
+                );
                 self.state = PState::HaveTask { task, line_num };
-            },
+            }
             (PState::HaveTask { task, line_num }, PEvent::TaskTime { total_duration }) => {
-                self.state = PState::HaveTaskTime { task, line_num, total_duration };
+                self.state = PState::HaveTaskTime {
+                    task,
+                    line_num,
+                    total_duration,
+                };
                 log::debug!("-> {:?}", self.state);
-            },
-            (PState::HaveTaskTime { task: prev_task, line_num: start_line_num, total_duration },
-             PEvent::TaskStart { task: next_task }) => {
+            }
+            (
+                PState::HaveTaskTime {
+                    task: prev_task,
+                    line_num: start_line_num,
+                    total_duration,
+                },
+                PEvent::TaskStart { task: next_task },
+            ) => {
                 let this_task_duration;
                 if total_duration >= self.prev_task_end_duration {
                     // this task's duration is the delta of the last duration
                     // stamp minus the previous task's ending duration.
                     this_task_duration = total_duration - self.prev_task_end_duration;
                 } else {
-                    log::warn!("note: got negative duration delta ({:?} -> {:?}), using 0 instead. {}",
-                        self.prev_task_end_duration, total_duration,
+                    log::warn!(
+                        "note: got negative duration delta ({:?} -> {:?}), using 0 instead. {}",
+                        self.prev_task_end_duration,
+                        total_duration,
                         if total_duration.as_secs() == 0 {
                             "latest value = 0, so guessing there are 2 ansible runs in this log?"
                         } else {
@@ -191,21 +225,43 @@ impl LogProcessor {
                     // TODO: i think this should actually be just total_duration right?
                     this_task_duration = Duration::new(0, 0);
                 }
-                self.task_times.push(TaskTime { task: prev_task, duration: this_task_duration, line_num: start_line_num });
+                self.task_times.push(TaskTime {
+                    task: prev_task,
+                    duration: this_task_duration,
+                    line_num: start_line_num,
+                });
                 log::info!("++ completed task: {:?}", self.task_times.last().unwrap());
                 self.prev_task_end_duration = total_duration;
-                self.state = ParseState::HaveTask { task: next_task, line_num };
+                self.state = ParseState::HaveTask {
+                    task: next_task,
+                    line_num,
+                };
                 log::debug!("-> {:?}", self.state);
-            },
-            (PState::HaveTaskTime { task, line_num, total_duration: prev },
-             PEvent::TaskTime { total_duration }) => {
+            }
+            (
+                PState::HaveTaskTime {
+                    task,
+                    line_num,
+                    total_duration: prev,
+                },
+                PEvent::TaskTime { total_duration },
+            ) => {
                 // this can happen when a task executes on multiple hosts,
                 // and so there are multiple task duration lines within new
                 // task lines in between. we want the last task duration
                 // value in the series, so we just update the stored
                 // duration while staying in the same state.
-                log::debug!( "-> HaveTaskTime updating task {} duration {:?} to {:?}", task, prev, total_duration);
-                self.state = ParseState::HaveTaskTime { task, line_num, total_duration };
+                log::debug!(
+                    "-> HaveTaskTime updating task {} duration {:?} to {:?}",
+                    task,
+                    prev,
+                    total_duration
+                );
+                self.state = ParseState::HaveTaskTime {
+                    task,
+                    line_num,
+                    total_duration,
+                };
             }
         }
     }
@@ -215,12 +271,22 @@ impl LogProcessor {
         // to Start. would be more correct to assign to "End" value or something, but meh.
         let state = std::mem::take(&mut self.state);
         match state {
-            ParseState::Start =>
-                log::error!("no data?"),
-            ParseState::HaveTask { task, line_num } =>
-                log::debug!("missing time for task {} (line {}), skipped?", task, line_num),
-            ParseState::HaveTaskTime { task, line_num, total_duration } => {
-                self.task_times.push(TaskTime { task, line_num, duration: total_duration - self.prev_task_end_duration });
+            ParseState::Start => log::error!("no data?"),
+            ParseState::HaveTask { task, line_num } => log::debug!(
+                "missing time for task {} (line {}), skipped?",
+                task,
+                line_num
+            ),
+            ParseState::HaveTaskTime {
+                task,
+                line_num,
+                total_duration,
+            } => {
+                self.task_times.push(TaskTime {
+                    task,
+                    line_num,
+                    duration: total_duration - self.prev_task_end_duration,
+                });
                 log::info!("++ final tasktime: {:?}", self.task_times.last().unwrap());
             }
         }
@@ -257,7 +323,10 @@ fn parse_task_duration_line(cap: Captures) -> Result<std::time::Duration> {
         let mut num: u64 = cap.get(cap_index).context(desc)?.as_str().parse()?;
         // Note: seems like ansible has a bug when time crosses 1hr mark, seconds has extra 3600.
         if cap_index == 4 && num >= 3600 {
-            log::warn!("ok, seconds value > 3600, assume that's an ansible bug. removing. {:?}", cap);
+            log::warn!(
+                "ok, seconds value > 3600, assume that's an ansible bug. removing. {:?}",
+                cap
+            );
             num -= 3600;
         }
         Ok(Duration::from_secs(num * sec_mult))
